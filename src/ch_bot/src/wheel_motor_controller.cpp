@@ -9,6 +9,8 @@
 #include <geometry_msgs/Twist.h>
 #include <geometry_msgs/Point.h>
 #include <time.h>
+#include <tf/transform_broadcaster.h>
+#include <nav_msgs/Odometry.h>
 
 #define SERIAL_PORT "/dev/ttyUSB0"
 #define SERIAL_DELAY_US 3000
@@ -23,6 +25,7 @@ class MotorController
 		void PublishVelocities();
 		void printDebug();
 		void setVelocities();
+		void publishOdometry();
 	
 	private:
 		// Serial transfer buffers
@@ -42,15 +45,27 @@ class MotorController
 		geometry_msgs::Point wheel_vel_msg;
 		std_msgs::Int32 left_encoder_pos_msg; 
 		std_msgs::Int32 right_encoder_pos_msg;
+		nav_msgs::Odometry odom;
+		geometry_msgs::TransformStamped odom_trans;
+		geometry_msgs::Quaternion odom_quat;
 		
 		float L_motor;
 		float R_motor;
+		
+		// Odometry tracking (maybe just directly use the odom struct in future. But cna I roate the quaternion as easy as +=?)
+		double x;
+		double y;
+		double th;
+		ros::Time current_time, last_time;
 		
 		// Pubs
 		ros::Publisher testPub;
 		ros::Publisher LencoderPub;
 		ros::Publisher RencoderPub;		
 		ros::Publisher velPub;
+		ros::Publisher odom_pub;
+		tf::TransformBroadcaster odom_broadcaster;
+		
 		
 		// Subs
 		ros::Subscriber direct_cmd; // Send a null terminated ASCII command string directly to motor controller
@@ -72,18 +87,25 @@ class MotorController
 MotorController::MotorController()
 {
 	// Initialise geometry
-	
-	wheelGeometryX[0] = 0;
-	wheelGeometryX[1] = 0;
+	wheelGeometryX[0] = 0; // mm
+	wheelGeometryX[1] = 0; // mm
 	// Left wheel is in +ve Y, right is -ve
-	wheelGeometryY[0] = 90;
-	wheelGeometryY[1] = -90;
+	wheelGeometryY[0] = 90; // mm
+	wheelGeometryY[1] = -90; // mm
 	
-	wheelRad = 50;
-	ticksPerRev = 768;
+	wheelRad = 50; // mm
+	ticksPerRev = 768; // encoder ticks per revolution
 	
+	// Motor Velocities in encoder ticks/sec
 	L_motor = 0;
 	R_motor = 0;
+	
+	// Initialise odometry
+	x = 0.0;
+	y = 0.0;
+	th = 0.0;
+	current_time = ros::Time::now();
+	last_time = ros::Time::now();
 	
 	// Subscribe to the command topics
 	direct_cmd = nh.subscribe<std_msgs::String>("direct_cmd", 100, &MotorController::cmd_callback, this);
@@ -95,10 +117,11 @@ MotorController::MotorController()
 	LencoderPub = nh.advertise<std_msgs::Int32>("L_encoder_pos", 100);
 	RencoderPub = nh.advertise<std_msgs::Int32>("R_encoder_pos", 100);	
 	velPub = nh.advertise<geometry_msgs::Point>("wheel_velocities", 100);
+	odom_pub = nh.advertise<nav_msgs::Odometry>("odom", 50);
 	
 	// -------- Set up wiringPi --------
 	wiringPiSetupSys();
-	if ( (hserial = serialOpen(SERIAL_PORT, 9600)) == -1)
+	if ( (hserial = serialOpen(SERIAL_PORT, 115200)) == -1)
 	{
 		printf("Failed to connect to device - Exiting\n");
 	}
@@ -288,6 +311,61 @@ void MotorController::setVelocities()
 }
 
 
+// --------
+// Just using the example from http://wiki.ros.org/navigation/Tutorials/RobotSetup/Odom
+		
+// --------
+void MotorController::publishOdometry()
+{
+/*
+	  double vx = 0.1;
+	  double vy = -0.1;
+	  double vth = 0.1;
+  */
+	current_time = ros::Time::now();
+	double dt = (current_time - last_time).toSec();
+	
+	/*
+    x += (0.1 * cos(th) - 0.1 * sin(th)) * dt;
+    y += (0.1 * sin(th) + 0.1 * cos(th)) * dt;
+    th += 0.1 * dt;*/
+	
+	    /*x += delta_x;
+    y += delta_y;
+    th += delta_th;*/
+	
+	x += (0.1*cos(th) + 0.1*sin(th))*dt;
+	y += (0.1*sin(th) - 0.1*cos(th))*dt;
+	th += 0.1*dt;
+	odom_quat = tf::createQuaternionMsgFromYaw(th);
+	odom_trans.header.stamp = current_time;
+	odom_trans.header.frame_id = "odom";
+	odom_trans.child_frame_id = "base_link";
+		
+	odom_trans.transform.translation.x = x;
+	odom_trans.transform.translation.y = y;
+	odom_trans.transform.translation.z = 0.0;
+	odom_trans.transform.rotation = odom_quat;
+	//send the transform
+	odom_broadcaster.sendTransform(odom_trans);
+	
+	odom.header.stamp = current_time;
+	odom.header.frame_id = "odom";
+	//set the position
+	odom.pose.pose.position.x = x;
+	odom.pose.pose.position.y = y;
+	odom.pose.pose.position.z = 0.0;
+	odom.pose.pose.orientation = odom_quat;
+	//set the velocity
+	odom.child_frame_id = "base_link";
+	odom.twist.twist.linear.x = 0.1;
+	odom.twist.twist.linear.y = 0.1;
+	odom.twist.twist.angular.z = 0.1;
+	
+	odom_pub.publish(odom);
+	last_time = current_time;
+}
+
 int main(int argc, char** argv)
 {
 	// First, initialise the ros node. Pass argc and argv in and give the node a name
@@ -297,7 +375,11 @@ int main(int argc, char** argv)
 	MotorController controller;
 	ros::Rate loop_rate(10);
 	
+	// --------
+	// Just using the example from http://wiki.ros.org/navigation/Tutorials/RobotSetup/Odom
 	
+	
+	// --------
 	
 	while (ros::ok())
 	{
@@ -309,6 +391,10 @@ int main(int argc, char** argv)
 		controller.PublishVelocities();
 		// Set the velocities 
 		controller.setVelocities();
+		// publish odometry
+		controller.publishOdometry();
+		
+	
 		
 		// Spin then sleep
 		ros::spinOnce();
