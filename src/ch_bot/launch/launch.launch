@@ -1,0 +1,9 @@
+
+
+<launch>
+
+	<param name="ch_bot_model" command="$(find xacro.py) '$(find ch_bot_description)/urdf/ch_bot.xacro'" />
+	
+	<node name="ch_bot_diff_drive" pkg="ch_bot" type="wheel_motor_controller" />
+
+</launch>

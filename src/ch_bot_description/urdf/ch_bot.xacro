@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<robot name="ch-bot">
+	<link name="base_link">
+		<visual>
+			<geometry>
+				<box size="0.36 0.28 0.15"/>
+			</geometry>
+		</visual>
+	</link>
+</robot>
